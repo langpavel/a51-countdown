@@ -1,8 +1,9 @@
 $PAGELENGTH (65535)
-;Program cita od +0:00 -> +19:59 -> +0:00 a zapisuje na LCD displej
+;Program cita od -1:00 -> +19:59 -> +0:00 a zapisuje na LCD displej
 ;Okolni hardware:
 ;            3x4543 dekoder
 ;            LCD +18:88
+;            Piezo
 
 ; Vstupy & vystupy
 
@@ -97,6 +98,49 @@ MAXMIN:  DB 060h
 MAXHOD:  DB 012h
 TABEND:  DB 00h
 
+ZMENSI:
+ push    acc
+ clr     A
+ movc    A,@A+DPTR
+ mov     POM,A
+ mov     R2,A
+ pop     acc
+
+ cjne    R2,#0,POKRACUJDALZ
+ ljmp    KONECREKURZEZ
+POKRACUJDALZ:
+
+ xch     A,@R0
+
+ clr     C
+ subb    A,#1
+ push    ACC
+ anl     A,#0Fh
+ cjne    A,#0Fh,Nepreteklo
+ pop     ACC
+ clr     C
+ subb    A,#6
+ ljmp    PRETEKLO2
+Nepreteklo:
+ pop     ACC
+PRETEKLO2:
+
+ da      A
+
+ cjne    A,#0,ZMENSIOK
+
+ mov     A,POM
+ inc     R0
+ inc     DPTR
+ lcall   ZMENSI                   ;rekurze <:-)>
+ dec     R0
+
+ ZMENSIOK:
+ xch     A,@R0
+
+ KONECREKURZEZ:
+RET
+
 ZVETSI:
 
   push    acc
@@ -137,7 +181,7 @@ mov     DPH,#HIGH(MAXLCD)
 mov     A,#SEC
 mov     R0,A
 mov     R1,A
-lcall   ZVETSI
+lcall   ZMENSI
 
 RET
 
@@ -230,7 +274,7 @@ setb    LCD50            ;obdelnik (dalsi zmena az v TIMER0)
 clr     PISKA            ;piezo
 setb    DT               ;dvojtecka
 clr     T                ;tecka
-setb    PLUS             ;plus
+clr     PLUS             ;plus
 setb    MINUS            ;minus
 
 mov     A,#100
@@ -238,7 +282,7 @@ mov     CITAC,A          ;citac po startu 25700d = 06464h
 mov     CITAC+1,A
 clr     A
 mov     SEC,A
-mov     MIN,A
+mov     MIN,#1
 mov     HOD,A
 
 mov     A,#(100h-100)
