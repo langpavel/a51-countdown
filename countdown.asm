@@ -1,5 +1,5 @@
 $PAGELENGTH (65535)
-;Program cita od -1:00 -> +19:59 -> +0:00 a zapisuje na LCD displej
+;Program cita od -1:00 -> +0:00 piska -> +0:10 nepika -> cita 19:59
 ;Okolni hardware:
 ;            3x4543 dekoder
 ;            LCD +18:88
@@ -35,7 +35,7 @@ CITAC:  DS   2           ;citace pro konstanty casu;
 SEC:    DS   1
 MIN:    DS   1
 HOD:    DS   1
-NULY:   DS   1           ;pocitani nul
+DVOJT:  DS   1           ;pomocny citac
 POM:    DS   1           ;promenna pro vse :-)
 ;----------------------------------------------------------------------------
 BSEG AT 020H
@@ -59,6 +59,10 @@ ORG     00030H           ;pocatek kodu
 ;------------------------ PODPROGRAMY ---------------------------------------
 
 GENERUJOBDELNIK:
+ DJNZ    DVOJT,DV
+ mov     dvojt,#50
+ cpl     DT                     ;zviditelni/zneviditelni ":"
+DV:
  cpl     LCD50                  ;generuj zmenu (obdelnik f=50Hz)
  mov     C,LCD50
  mov     LCD,C
@@ -99,7 +103,19 @@ MAXMIN:  DB 060h
 MAXHOD:  DB 012h
 TABEND:  DB 00h
 
-DECA_BCD:                       ;zmensi bcd cislo o 1, 000h -> 0F9h
+KONTROLUJNULY:
+ push    ACC
+ mov     A,SEC
+ add     A,MIN
+ add     A,HOD
+ jnz     NEPLATI
+ setb    PLUS
+ setb    PISKA
+NEPLATI:
+ pop     ACC     
+RET
+
+DECA_BCD:                       ;zmensi bcd cislo v ACC o 1, 000h -> 0F9h
  dec     A
  push    ACC
  anl     A,#00Fh
@@ -132,9 +148,6 @@ POKRACUJDALZ:
 
  mov     A,POM
  lcall   DECA_BCD
- djnz    NULY,DAL
- setb    PLUS
-DAL:
  inc     R0
  inc     DPTR
  lcall   ZMENSI                   ;rekurze <:-)>
@@ -186,8 +199,8 @@ mov     A,#SEC
 mov     R0,A
 mov     R1,A
 jb      PLUS,ZVETSIC
-mov     NULY,#2
 lcall   ZMENSI
+lcall   KONTROLUJNULY           ;kdyz -0:00:00, nastav PLUS
 RET
 ZVETSIC:
 lcall   ZVETSI
@@ -198,6 +211,16 @@ TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
  push   ACC
  mov    A,R0
  push   ACC                     ;uloz R0
+
+jnb     PISKA,NEPISKAT
+ mov    A,CITAC
+ mov    C,ACC.3;
+ mov    PIEZO,C
+ mov    A,SEC
+ mov    C,ACC.4
+ cpl    C
+ mov    PISKA,C
+NEPISKAT:
 
 djnz    CITAC,KONEC             ;IF(--CITAC != 0) jmp POROVNEJ
 mov     CITAC,#100              ;probiha 100x (f=1000000/100/100 = 100 Hz)
@@ -274,12 +297,12 @@ mov     JEDNA,C
 RET
 ;----------------------------------------------------------------------------
 START:                   ;hlavni program
+clr     PISKA            ;piezo
 clr     LCD1
 clr     LCD2
 clr     LCD3
 setb    LCD
 setb    LCD50            ;obdelnik (dalsi zmena az v TIMER0)
-clr     PISKA            ;piezo
 setb    DT               ;dvojtecka
 clr     T                ;tecka
 clr     PLUS             ;plus
@@ -288,6 +311,7 @@ setb    MINUS            ;minus
 mov     A,#100
 mov     CITAC,A          ;citac po startu 25700d = 06464h
 mov     CITAC+1,A
+mov     DVOJT,#50
 clr     A
 mov     SEC,A
 mov     MIN,#1
