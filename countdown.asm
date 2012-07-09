@@ -3,12 +3,12 @@ $PAGELENGTH (65535)
 ;Okolni hardware:
 ;            3x4543 dekoder
 ;            LCD +18:88
-;            Piezo
+;            Piezo samovybuzovaci
 ;            4xTlacitko + 4xdioda
 
 ; Vstupy & vystupy
 
-PIEZO   BIT  P3.3        ;vystup na piezo - neaktivni=0, aktivni=f (1kHz)
+PIEZO   BIT  P3.3        ;vystup na piezo - neaktivni=0, aktivni=1 (sambuz)
 TLAC    BIT  P3.5        ;spolecny vstup pro klavesnici - cteni v 1
 
 LCD3    BIT  P1.6        ;vstup LE (uvolneni stradace) dekoderu 4543
@@ -40,8 +40,6 @@ HOD:    DS   1
 DVOJT:  DS   1           ;pomocny citac
 POM:    DS   1           ;promenna pro vse :-)
 PISK:   DS   1           ;citac pro piezo
-PISKMEMO:DS  1           ;pamet posledni MAX hodnoty PISK
-PISKCN: DS   1           ;frekvence pro zmenu tonu
 ;----------------------------------------------------------------------------
 BSEG AT 020H
 LCD50:  DBIT 1           ;obdelnik pro LCD a 4543
@@ -56,6 +54,7 @@ PISKPR: DBIT 1           ;pro prerusovane piskani
 VIC20:  DBIT 1           ;1=zobrazuj hodiny,0=zobrazuj sekundy
 POMBIT: DBIT 1           ;pomocny-vyuziti v KONTOLUJCAS
 PRVNID: DBIT 1           ;pomocny-vyrovnava chybu plosnaku :)
+OKPISK: DBIT 1           ;bit 0 = nebude opakovane piskat, 1 = will beep again
 ;----------------------------------------------------------------------------
 CSEG AT 00000H           ;instrukcni pocatek
 LJMP    START
@@ -84,6 +83,8 @@ KONTROLUJNULY:
  jnz     NEPLATI
  setb    PLUS
  setb    PISKA
+ setb    OKPISK
+ setb    PISKPR
 NEPLATI:
  pop     ACC     
 RET
@@ -229,38 +230,27 @@ TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
  mov    A,R0
  push   ACC                     ;uloz R0
 
-PISKANI:
- mov    C,PISKA
- jnc    NEPISKAT               ;PIEZO - generovani frekvence ...
- jnb    PISKPR,NIZKYTON
- clr    PISKPR
- inc    PISKMEMO
- mov    A,PISKMEMO
- cjne   A,#8,NIZKYTON
- mov    PISKMEMO,#2
-NIZKYTON:
- mov    A,SEC                  ;resi konec
- mov    C,ACC.4                ;po 10 sekundach
- cpl    C
- mov    PISKA,C
- djnz   PISK,KONECPISK
- cpl    PIEZO
- mov    PISK,PISKMEMO
- ljmp   KONECPISK
-NEPISKAT:
- clr    PIEZO
-KONECPISK:
-
 djnz    CITAC,KONEC             ;IF(--CITAC != 0) jmp POROVNEJ
 mov     CITAC,#100              ;probiha 100x (f=1000000/100/100 = 100 Hz)
 
- DJNZ    PISKCN,DVx             ;10Hz - ovladani dvojtecky
- setb    PISKPR
- mov     PISKCN,#10
-DVx:
-
- DJNZ    DVOJT,DV               ;50Hz - ovladani dvojtecky
+ DJNZ    DVOJT,DV               ;50Hz - ovladani dvojtecky a pieza
  mov     dvojt,#50
+
+ mov     A,SEC                  ;je v sekundach 10 a vic??
+ mov     C,ACC.4
+ cpl     C
+ anl     C,PISKA                ;kdyz ano, prestane piskat
+ mov     PISKA,C
+
+ jnb     PISKA,NEPISKAT
+ cpl     PISKPR                 ;prerusovani piskani
+ jnb     PISKPR,NEPISKAT
+ setb    PIEZO                  ;Piska !!!
+ ljmp    KONECPISK
+NEPISKAT:
+ clr     PIEZO
+KONECPISK:
+
  jnb     VIC20,DV
  cpl     DT                     ;zviditelni/zneviditelni ":"
 DV:
@@ -272,6 +262,14 @@ jnb     VIC20,NEZOBRAZDT
 setb    DT
 NEZOBRAZDT:
 lcall   ZVETSICITACE
+
+ jnb     OKPISK,NEOPAKUJPISK    ;v pripade opakovani piskani a sec=0 zacne
+ mov     A,SEC                  ;piskat
+ jnz     NEOPAKUJPISK
+ setb    PISKA
+ setb    PISKPR
+NEOPAKUJPISK:
+
 KONEC:
 pop     ACC
 mov     R0,A
@@ -424,6 +422,7 @@ jc      KONECTL1         ;neni-li stisk, skoc dal
         ;telo T1 - HOD
  setb   STISK
  clr    PISKA
+ clr    OKPISK
  jb     TR0,KONECTL1     ;pokud cita, konec
  jnb    PLUS,PL1
  lcall  CLRFUNC
@@ -445,6 +444,7 @@ jc      KONECTL2         ;neni-li stisk, skoc dal
         ;telo T2 - MIN
  setb   STISK
  clr    PISKA
+ clr    OKPISK
  jb     TR0,KONECTL2
  jnb    PLUS,PL2
  lcall  CLRFUNC
@@ -474,6 +474,7 @@ jc      KONECTL4         ;neni-li stisk, skoc dal
         ;telo T4 - S/S Start/stop - neguje citani
  setb   STISK
  clr    PISKA
+ clr    OKPISK
  cpl    TR0
  setb   DT
 KONECTL4:
@@ -509,8 +510,9 @@ mov     A,#(100h-100)
 mov     TH0,A
 mov     TL0,#0
 
-clr     PIEZO
+clr     OKPISK
 clr     PISKA            ;piezo
+clr     PIEZO
 clr     LCD1
 clr     LCD2
 clr     LCD3
@@ -521,8 +523,6 @@ clr     T                ;tecka
 setb    PLUS             ;plus
 setb    MINUS            ;minus
 
-mov     PISKMEMO,#1
-mov     PISKCN,#10
 mov     A,#100
 mov     CITAC,A          ;citac po startu 25700d = 06464h
 mov     CITAC+1,A
