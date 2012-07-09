@@ -1,24 +1,26 @@
 $PAGELENGTH (65535)
-;Program cita od -1:00 -> +0:00 piska -> +0:10 nepika -> cita 19:59
+;Program cita maximalne od -19:59.00 do 19:59.59 a v nule deset vterin piska
 ;Okolni hardware:
 ;            3x4543 dekoder
 ;            LCD +18:88
 ;            Piezo
+;            4xTlacitko + 4xdioda
 
 ; Vstupy & vystupy
 
-PIEZO   BIT  P3.3        ;vystup na piezo - neaktivni=1, aktivni=f (1kHz)
+PIEZO   BIT  P3.3        ;vystup na piezo - neaktivni=0, aktivni=f (1kHz)
+TLAC    BIT  P3.5        ;spolecny vstup pro klavesnici - cteni v 1
 
 LCD3    BIT  P1.6        ;vstup LE (uvolneni stradace) dekoderu 4543
 LCD2    BIT  P1.5        ;  1=zapis
 LCD1    BIT  P1.4
 
-BCDA    BIT  P1.0        ;vstupy BCD pro 4543
-BCDB    BIT  P1.2
-BCDC    BIT  P1.3
-BCDD    BIT  P1.1
+BCDA    BIT  P1.0        ;vstupy BCD pro 4543  -tlac. Hod
+BCDB    BIT  P1.2                            ; -tlac. Min
+BCDC    BIT  P1.3                            ; -tlac. Clr
+BCDD    BIT  P1.1                            ; -tlac. S/s (Start/stop)
 
-LCD     BIT  P3.7        ;obdelnik pro LCD a 4543 (20 - 100 Hz)
+LCD     BIT  P3.7        ;obdelnik pro LCD a 4543 (20 - 100 Hz) 50Hz
 ;tyto signaly se musi menit spolecne s LCD:
 LCD4    BIT  P1.7        ;vstup na LCD - 4.rad "1"
 LCDDT   BIT  P3.4        ;dvojtecka
@@ -37,6 +39,9 @@ MIN:    DS   1
 HOD:    DS   1
 DVOJT:  DS   1           ;pomocny citac
 POM:    DS   1           ;promenna pro vse :-)
+PISK:   DS   1           ;citac pro piezo
+PISKMEMO:DS  1           ;pamet posledni MAX hodnoty PISK
+PISKCN: DS   1           ;frekvence pro zmenu tonu
 ;----------------------------------------------------------------------------
 BSEG AT 020H
 LCD50:  DBIT 1           ;obdelnik pro LCD a 4543
@@ -45,57 +50,25 @@ DT:     DBIT 1           ;pro dvojtecku (0=neni videt/1=je videt)
 T:      DBIT 1           ;pro tecku (0=neni videt/1=je videt)
 PLUS:   DBIT 1           ;pro + (0=neni videt/1=je videt)
 MINUS:  DBIT 1           ;pro - (0=neni videt/1=je videt)
-
+STISK:  DBIT 1           ;pro tlacitka - proti zakmitu
 PISKA:  DBIT 1           ;pro piezo (0=nepiska/1=piska podle)
-
+PISKPR: DBIT 1           ;pro prerusovane piskani
+VIC20:  DBIT 1           ;1=zobrazuj hodiny,0=zobrazuj sekundy
+POMBIT: DBIT 1           ;pomocny-vyuziti v KONTOLUJCAS
+PRVNID: DBIT 1           ;pomocny-vyrovnava chybu plosnaku :)
 ;----------------------------------------------------------------------------
 CSEG AT 00000H           ;instrukcni pocatek
 LJMP    START
 ORG     0000BH           ;preruseni od casovace 0
 LJMP    TIMER0INT
-;ORG     0001BH           ;preruseni od casovace 1
-;LJMP    TIMER1INT
+ORG     0001BH           ;preruseni od casovace 1
+LJMP    TIMER1INT
 ORG     00030H           ;pocatek kodu
 ;------------------------ PODPROGRAMY ---------------------------------------
-
-GENERUJOBDELNIK:
- DJNZ    DVOJT,DV
- mov     dvojt,#50
- cpl     DT                     ;zviditelni/zneviditelni ":"
-DV:
- cpl     LCD50                  ;generuj zmenu (obdelnik f=50Hz)
- mov     C,LCD50
- mov     LCD,C
-jc       LCDSET
- mov     C,JEDNA                ;vystup LCD nenastaven (0)
- mov     LCD4,C
- mov     C,DT
- mov     LCDDT,C
- mov     C,T
- mov     LCDT,C
- mov     C,PLUS
- mov     LCDP,C
- mov     C,MINUS
- mov     LCDM,C
- ljmp    LCDNOTSET
-LCDSET:                         ;vystup LCD nastaven (1)
- mov     C,JEDNA
- cpl     C
- mov     LCD4,C
- mov     C,DT
- cpl     C
- mov     LCDDT,C
- mov     C,T
- cpl     C
- mov     LCDT,C
- mov     C,PLUS
- cpl     C
- mov     LCDP,C
- mov     C,MINUS
- cpl     C
- mov     LCDM,C
-LCDNOTSET:                      ;pokracuj ...
-RET
+;komentar
+DB 13,10
+DB "Program BUDIK!.A51 - Odpocitavaci hodiny pro mamku :-)",13,10
+DB "ROZSAH: -19:59.00 -> 00:00.00 -> 19:59.59 -> ???",13,10
 ;----------------------------------------------------------------------------
 MAXLCD:
 MAXSEC:  DB 060h
@@ -206,32 +179,99 @@ ZVETSIC:
 lcall   ZVETSI
 RET
 
+TIMER1INT:                      ;pro zmenu polarity na LCD
+push   PSW                      ;uloz PSW
+push   ACC
+ cpl     LCD50                  ;generuj zmenu (obdelnik f=?)
+ mov     C,LCD50
+ mov     LCD,C
+jc       LCDSET
+ mov     C,JEDNA                ;vystup LCD nenastaven (0)
+ mov     LCD4,C
+ mov     C,DT
+ mov     LCDDT,C
+ mov     C,T
+ mov     LCDT,C
+ jb      PLUS,MINUSNEa
+ clr     LCDP
+ setb    LCDM
+ ljmp    LCDNOTSET
+MINUSNEa:
+ clr     LCDP
+ clr     LCDM
+ ljmp    LCDNOTSET
+LCDSET:                         ;vystup LCD nastaven (1)
+ mov     C,JEDNA
+ cpl     C
+ mov     LCD4,C
+ mov     C,DT
+ cpl     C
+ mov     LCDDT,C
+ mov     C,T
+ cpl     C
+ mov     LCDT,C
+ jb      PLUS,MINUSNEb
+ setb    LCDP
+ clr     LCDM
+ ljmp    LCDNOTSET
+MINUSNEb:
+ setb    LCDP
+ setb    LCDM
+ ljmp    LCDNOTSET
+LCDNOTSET:                      ;pokracuj ...
+pop     ACC
+pop     PSW
+RETI
+
 TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
  push   PSW                     ;uloz PSW
  push   ACC
  mov    A,R0
  push   ACC                     ;uloz R0
 
-jnb     PISKA,NEPISKAT
- mov    A,CITAC
- mov    C,ACC.3;
- mov    PIEZO,C
- mov    A,SEC
- mov    C,ACC.4
+PISKANI:
+ mov    C,PISKA
+ jnc    NEPISKAT               ;PIEZO - generovani frekvence ...
+ jnb    PISKPR,NIZKYTON
+ clr    PISKPR
+ inc    PISKMEMO
+ mov    A,PISKMEMO
+ cjne   A,#8,NIZKYTON
+ mov    PISKMEMO,#2
+NIZKYTON:
+ mov    A,SEC                  ;resi konec
+ mov    C,ACC.4                ;po 10 sekundach
  cpl    C
  mov    PISKA,C
+ djnz   PISK,KONECPISK
+ cpl    PIEZO
+ mov    PISK,PISKMEMO
+ ljmp   KONECPISK
 NEPISKAT:
+ clr    PIEZO
+KONECPISK:
 
 djnz    CITAC,KONEC             ;IF(--CITAC != 0) jmp POROVNEJ
 mov     CITAC,#100              ;probiha 100x (f=1000000/100/100 = 100 Hz)
 
-lcall   GENERUJOBDELNIK
+ DJNZ    PISKCN,DVx             ;10Hz - ovladani dvojtecky
+ setb    PISKPR
+ mov     PISKCN,#10
+DVx:
+
+ DJNZ    DVOJT,DV               ;50Hz - ovladani dvojtecky
+ mov     dvojt,#50
+ jnb     VIC20,DV
+ cpl     DT                     ;zviditelni/zneviditelni ":"
+DV:
 
 djnz    CITAC+1,KONEC
 mov     CITAC+1,#100            ;probiha 1x (f=1000000/100/100/100 = 1 Hz)
-
+mov     DVOJT,#50
+jnb     VIC20,NEZOBRAZDT
+setb    DT
+NEZOBRAZDT:
 lcall   ZVETSICITACE
-
 KONEC:
 pop     ACC
 mov     R0,A
@@ -239,7 +279,7 @@ pop     ACC
 pop     PSW
 RETI
 ;----------------------------------------------------------------------------
-CEKEJ:                   ;A je parametr
+CEKEJ:                   ;A je parametr cim vetsi, tim delsi
  xch A,R0
  push acc
  xch A,R0
@@ -266,6 +306,7 @@ pop     ACC
 RET
 ;----------------------------------------------------------------------------
 NASTAVBCD:               ;parametr v A
+jb  PRVNID,NASTAVBCDERRCOMP
 mov C,ACC.0              ;A
 mov BCDA,C
 mov C,ACC.1              ;B
@@ -275,28 +316,200 @@ mov BCDC,C
 mov C,ACC.3              ;D
 mov BCDD,C
 RET
+NASTAVBCDERRCOMP:        ;kvuli chybe na plosnaku :)
+mov C,ACC.0              ;A
+mov P1.3,C
+mov C,ACC.1              ;B
+mov P1.1,C
+mov C,ACC.2              ;C
+mov P1.0,C
+mov C,ACC.3              ;D
+mov P1.2,C
+RET
 
-ZAPISDO4543:             ;nastav cely displej
+KONTROLUJCAS:            ;vejde se udaj na display ???
+setb    POMBIT
+mov     A,HOD
+jnz     KONTRKONEC
+mov     A,MIN
+cjne    A,#020h,CJNEC    ;A<20 => C=1
+setb    DT
+ljmp    KONTRKONEC
+CJNEC:
+jnc     KONTRKONEC       ;kdyz A>20
+clr     POMBIT
+KONTRKONEC:
+mov     C,POMBIT
+mov     VIC20,C
+ZAPISDO4543:
+jnb     VIC20,ZAPISDO4543SEC
+ljmp    ZAPISDO4543HOD
+ZAPISDO4543SEC:          ;nastav cely displej, zobraz MIN.SEC
+setb    T                ;zobraz tecku,
+clr     DT               ;smaz dvojtecku
+
 mov     A,SEC
 lcall   NASTAVBCD
+lcall   CEKEJMALO
 setb    LCD1
 lcall   CEKEJMALO
 clr     LCD1
+
 swap    A
 lcall   NASTAVBCD
+lcall   CEKEJMALO
 setb    LCD2
 lcall   CEKEJMALO
 clr     LCD2
+
 mov     A,MIN
+setb    PRVNID
 lcall   NASTAVBCD
+clr     PRVNID
+lcall   CEKEJMALO
 setb    LCD3
 lcall   CEKEJMALO
 clr     LCD3
+
 mov     C,ACC.4
 mov     JEDNA,C
+
+mov     A,#0ffh
+lcall   NASTAVBCD
 RET
-;----------------------------------------------------------------------------
-START:                   ;hlavni program
+
+ZAPISDO4543HOD:          ;nastav cely displej, zobraz HOD:MIN
+clr     T                ;smaz tecku
+
+mov     A,MIN
+lcall   NASTAVBCD
+lcall   CEKEJMALO
+setb    LCD1
+lcall   CEKEJMALO
+clr     LCD1
+
+swap    A
+lcall   NASTAVBCD
+lcall   CEKEJMALO
+setb    LCD2
+lcall   CEKEJMALO
+clr     LCD2
+
+mov     A,HOD
+setb    PRVNID
+lcall   NASTAVBCD
+lcall   CEKEJMALO
+clr     PRVNID
+setb    LCD3
+lcall   CEKEJMALO
+clr     LCD3
+
+mov     C,ACC.4
+mov     JEDNA,C
+
+mov     A,#0ffh
+lcall   NASTAVBCD
+RET
+
+CTITLACITKA:             ;zjisti stisk tlacitka a vykona prikaz
+                         ;prvni tlacitko - HOD
+setb    TLAC             ;priprav na cteni
+clr     BCDA             ;T1
+setb	BCDB
+setb	BCDC
+setb	BCDD
+clr     STISK            ;proti zakmitu
+mov     C,TLAC           ;cti stav
+jc      KONECTL1         ;neni-li stisk, skoc dal
+        ;telo T1 - HOD
+ setb   STISK
+ clr    PISKA
+ jb     TR0,KONECTL1     ;pokud cita, konec
+ jnb    PLUS,PL1
+ lcall  CLRFUNC
+ clr    PLUS
+ PL1:
+ xch    A,HOD
+ add    A,#1
+ da     A
+ mov    HOD,A
+ setb   DT
+ cjne   A,#020h,KONECTL1
+ mov    HOD,#0
+ lcall  KONTROLUJNULY
+KONECTL1:
+setb	BCDA
+clr     BCDB             ;T2 - MIN
+mov     C,TLAC           ;cti stav
+jc      KONECTL2         ;neni-li stisk, skoc dal
+        ;telo T2 - MIN
+ setb   STISK
+ clr    PISKA
+ jb     TR0,KONECTL2
+ jnb    PLUS,PL2
+ lcall  CLRFUNC
+ clr    PLUS
+ PL2:
+ xch    A,MIN
+ addc   A,#1
+ da     A
+ mov    MIN,A
+ cjne   A,#060h,KONECTL2
+ mov    MIN,#0
+KONECTL2:
+
+setb	BCDB
+clr     BCDC             ;T3 - CLR
+mov     C,TLAC           ;cti stav
+jc      KONECTL3         ;neni-li stisk, skoc dal
+        ;telo T3 - CLR (nastavi 0:00), zastavi citac
+ setb   STISK
+ clr    TR0
+ lcall  CLRFUNC
+KONECTL3:
+setb	BCDC
+clr     BCDD             ;T4
+mov     C,TLAC           ;cti stav
+jc      KONECTL4         ;neni-li stisk, skoc dal
+        ;telo T4 - S/S Start/stop - neguje citani
+ setb   STISK
+ clr    PISKA
+ cpl    TR0
+ setb   DT
+KONECTL4:
+ LCALL  KONTROLUJCAS
+ clr    BCDA
+ clr    BCDB
+ clr    BCDC
+ clr    BCDD
+ jnb    STISK,KONECTLACITEK
+ mov    A,R2
+ push   ACC
+ mov    R2,#10
+ KLOOP:
+ mov    A,#080h
+ lcall  CEKEJ
+ setb   TLAC
+ mov    C,TLAC           ;cti stav
+ jc     KONECTLA         ;neni-li stisk, skoc dal
+ djnz   R2,KLOOP
+KONECTLA:
+ pop    ACC
+ mov    R2,A
+
+KONECTLACITEK: 
+RET
+
+CLRFUNC:        ;vymaze citace
+mov     TMOD,#00000010b   ;gate,c/t,m1,m0 - casovac s obvod. prednastavenim
+mov     TCON,#01000000b   ;zablokovani citace 0 a povoleni 1
+mov     IE,#11101010b     ;povol preruseni od citace 0 a 1
+mov     IP,#11100010b     ;priorita
+mov     A,#(100h-100)
+mov     TH0,A
+mov     TL0,#0
+
+clr     PIEZO
 clr     PISKA            ;piezo
 clr     LCD1
 clr     LCD2
@@ -305,27 +518,24 @@ setb    LCD
 setb    LCD50            ;obdelnik (dalsi zmena az v TIMER0)
 setb    DT               ;dvojtecka
 clr     T                ;tecka
-clr     PLUS             ;plus
+setb    PLUS             ;plus
 setb    MINUS            ;minus
 
+mov     PISKMEMO,#1
+mov     PISKCN,#10
 mov     A,#100
 mov     CITAC,A          ;citac po startu 25700d = 06464h
 mov     CITAC+1,A
 mov     DVOJT,#50
 clr     A
-mov     SEC,A
-mov     MIN,#1
-mov     HOD,A
-
-mov     A,#(100h-100)
-mov     TH0,A
-mov     TH1,A
-mov     TMOD,#00000010b   ;gate,c/t,m1,m0 - casovac s obvod. prednastavenim
-mov     TCON,#00010000b
-mov     IE,#11100010b     ;povol preruseni od citace 0
-mov     IP,#11100010b     ;priorita
-
+mov     SEC,A            ;pocet sekund po startu - VSE V BCD
+mov     MIN,A            ;pocet minut
+mov     HOD,A            ;hodin
+RET
+;----------------------------------------------------------------------------
+START:                   ;hlavni program
+lcall   CLRFUNC
 LOOP:
-lcall   ZAPISDO4543
+lcall   CTITLACITKA
 ljmp    LOOP
 END
