@@ -111,25 +111,24 @@ ZMENSI:
 POKRACUJDALZ:
 
  xch     A,@R0
+ dec     A
 
- clr     C
- subb    A,#1
  push    ACC
- anl     A,#0Fh
- cjne    A,#0Fh,Nepreteklo
+ anl     A,#00Fh
+ cjne    A,#00Fh,ZDAL
  pop     ACC
  clr     C
  subb    A,#6
- ljmp    PRETEKLO2
-Nepreteklo:
+ ljmp    ZDAL2
+ZDAL:
  pop     ACC
-PRETEKLO2:
+ZDAL2:
 
- da      A
-
- cjne    A,#0,ZMENSIOK
+ cjne    A,#0F9h,ZMENSIOK
 
  mov     A,POM
+ clr     C
+ subb    A,#7
  inc     R0
  inc     DPTR
  lcall   ZMENSI                   ;rekurze <:-)>
