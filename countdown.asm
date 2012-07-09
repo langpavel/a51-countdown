@@ -1,7 +1,8 @@
-;Program cita od 0 do 1959 a zapisuje na LCD displej
+$PAGELENGTH (65535)
+;Program cita od +0:00 -> +19:59 -> +0:00 a zapisuje na LCD displej
 ;Okolni hardware:
 ;            3x4543 dekoder
-;            LCD 1888
+;            LCD +18:88
 
 ; Vstupy & vystupy
 
@@ -31,8 +32,9 @@ STACK:  DS   017H        ;zasobnik prez RB1-RB3 (008h - 019h)
 ORG     030H             ;nevyuzita RAM
 CITAC:  DS   2           ;citace pro konstanty casu;
 SEC:    DS   1
-HOD:    DS   1
 MIN:    DS   1
+HOD:    DS   1
+POM:    DS   1           ;promenna pro vse :-)
 ;----------------------------------------------------------------------------
 BSEG AT 020H
 LCD50:  DBIT 1           ;obdelnik pro LCD a 4543
@@ -54,11 +56,7 @@ LJMP    TIMER0INT
 ORG     00030H           ;pocatek kodu
 ;------------------------ PODPROGRAMY ---------------------------------------
 
-TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
- push   ACC
-djnz    CITAC,KONEC             ;IF(--CITAC != 0) jmp POROVNEJ
-mov     CITAC,#100              ;probiha 100x (f=1000000/100/100 = 100 Hz)
-
+GENERUJOBDELNIK:
  cpl     LCD50                  ;generuj zmenu (obdelnik f=50Hz)
  mov     C,LCD50
  mov     LCD,C
@@ -91,28 +89,79 @@ LCDSET:                         ;vystup LCD nastaven (1)
  cpl     C
  mov     LCDM,C
 LCDNOTSET:                      ;pokracuj ...
+RET
+;----------------------------------------------------------------------------
+MAXLCD:
+MAXSEC:  DB 060h
+MAXMIN:  DB 060h
+MAXHOD:  DB 012h
+TABEND:  DB 00h
 
-djnz    CITAC+1,KONEC
-mov     CITAC+1,#100            ;probiha 1x (f=1000000/100/100/100 = 100 Hz)
-xch     A,SEC
-add     A,#1
-da      A
-cjne    A,#060h,SECOK
-clr     A
+ZVETSI:
 
- xch     A,MIN
+  push    acc
+   clr     A
+   movc    A,@A+DPTR
+   mov     POM,A
+   mov     R2,A
+  pop     acc
+
+ cjne    R2,#0,POKRACUJDAL
+ ljmp    KONECREKURZE
+POKRACUJDAL:
+
+ xch     A,@R0
  add     A,#1
  da      A
- cjne    A,#060h,MINOK
+
+ cjne    A,POM,ZVETSIOK
  clr     A
 
- MINOK:
- xch     A,MIN
+ inc     R0
+ inc     DPTR
+ lcall   ZVETSI                   ;rekurze <:-)>
+ dec     R0
 
-SECOK:
-xch     A,SEC
+ ZVETSIOK:
+ xch     A,@R0
+
+ KONECREKURZE:
+RET
+
+ZVETSICITACE:                   ;Pricte citace casu
+                                ;V R0,R1 je parametr
+                                ;R0 - adresa citace
+                                ;R1 - nejnizsi byt citace
+mov     DPL,#LOW(MAXLCD)        ;Ukazatel na tabulku maximalnich hodnot citacu
+mov     DPH,#HIGH(MAXLCD)
+mov     A,#SEC
+mov     R0,A
+mov     R1,A
+lcall   ZVETSI
+
+RET
+
+TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
+ push   PSW                     ;uloz PSW
+ push   ACC
+ mov    A,R0
+ push   ACC                     ;uloz R0
+
+djnz    CITAC,KONEC             ;IF(--CITAC != 0) jmp POROVNEJ
+mov     CITAC,#100              ;probiha 100x (f=1000000/100/100 = 100 Hz)
+
+lcall   GENERUJOBDELNIK
+
+djnz    CITAC+1,KONEC
+mov     CITAC+1,#100            ;probiha 1x (f=1000000/100/100/100 = 1 Hz)
+
+lcall   ZVETSICITACE
+
 KONEC:
 pop     ACC
+mov     R0,A
+pop     ACC
+pop     PSW
 RETI
 ;----------------------------------------------------------------------------
 CEKEJ:                   ;A je parametr
