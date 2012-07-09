@@ -35,6 +35,7 @@ CITAC:  DS   2           ;citace pro konstanty casu;
 SEC:    DS   1
 MIN:    DS   1
 HOD:    DS   1
+NULY:   DS   1           ;pocitani nul
 POM:    DS   1           ;promenna pro vse :-)
 ;----------------------------------------------------------------------------
 BSEG AT 020H
@@ -98,6 +99,20 @@ MAXMIN:  DB 060h
 MAXHOD:  DB 012h
 TABEND:  DB 00h
 
+DECA_BCD:                       ;zmensi bcd cislo o 1, 000h -> 0F9h
+ dec     A
+ push    ACC
+ anl     A,#00Fh
+ cjne    A,#00Fh,ZDAL
+ pop     ACC
+ clr     C
+ subb    A,#6
+ ljmp    ZDAL2
+ZDAL:
+ pop     ACC
+ZDAL2:
+RET
+
 ZMENSI:
  push    acc
  clr     A
@@ -111,24 +126,15 @@ ZMENSI:
 POKRACUJDALZ:
 
  xch     A,@R0
- dec     A
-
- push    ACC
- anl     A,#00Fh
- cjne    A,#00Fh,ZDAL
- pop     ACC
- clr     C
- subb    A,#6
- ljmp    ZDAL2
-ZDAL:
- pop     ACC
-ZDAL2:
+ lcall   DECA_BCD
 
  cjne    A,#0F9h,ZMENSIOK
 
  mov     A,POM
- clr     C
- subb    A,#7
+ lcall   DECA_BCD
+ djnz    NULY,DAL
+ setb    PLUS
+DAL:
  inc     R0
  inc     DPTR
  lcall   ZMENSI                   ;rekurze <:-)>
@@ -141,7 +147,6 @@ ZDAL2:
 RET
 
 ZVETSI:
-
   push    acc
    clr     A
    movc    A,@A+DPTR
@@ -180,8 +185,12 @@ mov     DPH,#HIGH(MAXLCD)
 mov     A,#SEC
 mov     R0,A
 mov     R1,A
+jb      PLUS,ZVETSIC
+mov     NULY,#2
 lcall   ZMENSI
-
+RET
+ZVETSIC:
+lcall   ZVETSI
 RET
 
 TIMER0INT:                      ;probiha 10000x (f=1000000/100 = 10000 Hz)
